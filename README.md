@@ -27,6 +27,7 @@ O sistema é construído sobre uma arquitetura orientada a eventos e filas (Prod
 
 ---
 
+
 ## Tecnologias Utilizadas
 
 * **Linguagem:** Python 3.9+
