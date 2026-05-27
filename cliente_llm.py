@@ -21,9 +21,9 @@ MODELO_NUVEM = "claude-3-haiku-20240307"
 MODELO_SLM = "llama3.2" # Ou gemma:2b
 
 MAX_TENTATIVAS = 4
-ATRASO_BASE = 1.0     
-MAX_ATRASO = 30.0     
-FATOR_JITTER = 0.3    
+ATRASO_BASE = 1.0 
+MAX_ATRASO = 30.0 
+FATOR_JITTER = 0.3 
 
 DIRETORIO_PROMPTS = Path(__file__).parent / "prompts"
 _cache_prompts: dict[str, str] = {}
@@ -64,7 +64,7 @@ async def chamar_llm(arquivo_prompt_sistema: str, mensagem_usuario: str, timeout
             latencia_ms = round((time.time() - t0) * 1000, 1)
             logger.info("Sucesso LLM tentativa=%d latencia=%.0fms", tentativa, latencia_ms)
             return {"texto": texto, "tokens_entrada": tokens_in, "tokens_saida": tokens_out, "tentativas": tentativa, "latencia_ms": latencia_ms}
-            
+ 
         except Exception as exc:
             ultimo_erro = exc
             logger.warning("Erro LLM tentativa=%d: %s", tentativa, exc)

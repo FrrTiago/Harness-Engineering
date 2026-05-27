@@ -10,6 +10,7 @@ import os
 import argparse
 from typing import Dict, Any
 
+from limpador_json import extrair_json_robusto
 from mensageria import FilaDistribuida
 from cliente_llm import chamar_llm
 
@@ -27,21 +28,16 @@ class TrabalhadorAnalise:
     def __init__(self, id_trabalhador: str, tipo_tarefa: str):
         self.id_trabalhador = id_trabalhador
         self.tipo_tarefa = tipo_tarefa
-        self.fila_entrada = FilaDistribuida("fila-trabalho")
+        self.fila_entrada = FilaDistribuida(f"fila-trabalho-{tipo_tarefa}")
         self.fila_saida = FilaDistribuida("fila-resultado")
-        self.fila_eventos = FilaDistribuida("fila-eventos") # Telemetria de rede
+        self.fila_eventos = FilaDistribuida("fila-eventos")
 
     async def executar(self):
-        logger.info("[%s] Iniciado na rede. Consumindo fila-trabalho.", self.id_trabalhador)
+        logger.info("[%s] Iniciado na rede. Consumindo sua fila dedicada.", self.id_trabalhador)
         while True:
             msg = await self.fila_entrada.receber(id_trabalhador=self.id_trabalhador)
             if not msg:
                 await asyncio.sleep(1.0)
-                continue
-            
-            # Filtra apenas mensagens da sua especialidade
-            if msg.corpo.get("tipo_tarefa") != self.tipo_tarefa:
-                await self.fila_entrada.rejeitar(msg.id_mensagem, atraso=0.5)
                 continue
 
             await self._processar_mensagem(msg)
@@ -49,24 +45,34 @@ class TrabalhadorAnalise:
     async def _processar_mensagem(self, msg):
         corpo = msg.corpo
         id_tarefa = corpo.get("id_tarefa")
-        
+
         await self.fila_eventos.enviar({"acao": "iniciar", "id_tarefa": id_tarefa, "nome_arquivo": corpo["nome_arquivo"], "tipo_tarefa": self.tipo_tarefa, "id_trabalhador": self.id_trabalhador, "tentativa": msg.contagem_recebimento})
 
         try:
             codigo_fonte = corpo["codigo_fonte"]
             msg_usuario = f"Arquivo: {corpo['nome_arquivo']}\n```python\n{codigo_fonte}\n```"
-            
+
             resultado_llm = await chamar_llm(MAPA_PROMPTS[self.tipo_tarefa], msg_usuario)
+            
+            # Usa o novo extrator robusto
+            texto_limpo = extrair_json_robusto(resultado_llm["texto"])
+            
             try:
-                analisado = json.loads(resultado_llm["texto"])
+                conteudo_json = json.loads(texto_limpo)
+                # SE FOR LISTA (caso do code_smell), envelopa em um dicionário para não quebrar o **
+                if isinstance(conteudo_json, list):
+                    analisado = {"analise": conteudo_json}
+                else:
+                    analisado = conteudo_json
             except json.JSONDecodeError:
                 analisado = {"bruto": resultado_llm["texto"], "erro_parse": True}
-            
+
+            # Agora o unpacking com ** NUNCA mais vai falhar!
             resultado_final = {**analisado, "tokens_entrada": resultado_llm["tokens_entrada"], "tokens_saida": resultado_llm["tokens_saida"]}
-            
+
             await self.fila_saida.enviar({"id_tarefa": id_tarefa, "tipo_tarefa": self.tipo_tarefa, "resultado": resultado_final})
             await self.fila_entrada.remover(msg.id_mensagem)
-            
+
             await self.fila_eventos.enviar({"acao": "finalizar", "id_tarefa": id_tarefa, "status": "sucesso", **resultado_final})
             logger.info("[%s] Tarefa %s concluída.", self.id_trabalhador, id_tarefa)
 
@@ -79,7 +85,7 @@ async def main():
     parser.add_argument("--tipo", required=True, choices=["geracao_teste", "code_smell", "documentacao"])
     parser.add_argument("--id", required=True)
     args = parser.parse_args()
-    
+
     trab = TrabalhadorAnalise(id_trabalhador=args.id, tipo_tarefa=args.tipo)
     await trab.executar()
 
