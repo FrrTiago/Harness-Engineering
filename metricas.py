@@ -95,6 +95,7 @@ class ColetorMetricas:
         tokens_entrada: int = 0,
         tokens_saida: int = 0,
         msg_erro: Optional[str] = None,
+        **kwargs # impede que quebre por receber argumentos não reconhecidos
     ):
         with self._trava:
             m = self._tarefas.get(id_tarefa)

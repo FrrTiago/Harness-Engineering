@@ -40,7 +40,7 @@ class FilaLocal:
         self.timeout_visibilidade = timeout_visibilidade
         self.dlq = dlq
         self._fila: asyncio.Queue = asyncio.Queue()
-        self._em_voo: Dict[str, Mensagem] = {}  
+        self._em_voo: Dict[str, Mensagem] = {}
         self._estatisticas = defaultdict(int)
 
     async def enviar(self, corpo: Dict[str, Any]) -> Mensagem:

@@ -12,6 +12,7 @@ import sys
 from aiohttp import web
 from aiohttp.web_middlewares import middleware
 
+from limpador_json import extrair_json_robusto
 from mensageria import barramento
 from metricas import coletor
 from cliente_llm import chamar_llm
@@ -22,7 +23,7 @@ logger = logging.getLogger("orquestrador")
 
 processos_workers = []
 TIPOS_TAREFA = ["geracao_teste", "code_smell", "documentacao"]
-TRABALHADORES_POR_TIPO = 2
+TRABALHADORES_POR_TIPO = 1
 
 # ==========================================
 # GESTÃO DE WORKERS REAIS (Subprocessos SO)
@@ -47,7 +48,7 @@ estado = {"relatorio_final": None}
 async def loop_agregador_reduce(total_arquivos_esperados: int):
     fila_res = barramento.obter_fila("fila-resultado")
     resultados_coletados = []
-    
+
     logger.info("Agregador iniciado, aguardando %d fragmentos...", total_arquivos_esperados)
     while len(resultados_coletados) < total_arquivos_esperados:
         msg = await fila_res.receber(id_trabalhador="agregador-reduce")
@@ -60,7 +61,11 @@ async def loop_agregador_reduce(total_arquivos_esperados: int):
     logger.info("Todos fragmentos coletados. Iniciando LLM Reduce...")
     try:
         resultado_llm = await chamar_llm("agregador_v1.md", json.dumps(resultados_coletados, ensure_ascii=False))
-        estado["relatorio_final"] = json.loads(resultado_llm["texto"])
+        
+        # Garante a extração limpa do JSON do relatório executivo
+        texto_limpo = extrair_json_robusto(resultado_llm["texto"])
+        estado["relatorio_final"] = json.loads(texto_limpo)
+        
     except Exception as e:
         estado["relatorio_final"] = {"erro": "Falha na agregação", "detalhe": str(e)}
 
@@ -108,7 +113,7 @@ async def api_fila_rejeitar(req):
 async def lidar_analisar(request: web.Request) -> web.Response:
     arquivos = []
     tipo_conteudo = request.content_type or ""
-    
+
     # Restaurando a leitura de arquivos multipart que você tinha perfeitamente no código original!
     if "multipart" in tipo_conteudo:
         leitor = await request.multipart()
@@ -124,13 +129,13 @@ async def lidar_analisar(request: web.Request) -> web.Response:
         return web.json_response({"erro": "Nenhum arquivo Python fornecido"}, status=400)
 
     total_chunks = len(arquivos) * len(TIPOS_TAREFA)
-    
     estado["relatorio_final"] = None
     asyncio.create_task(loop_agregador_reduce(total_chunks))
-    
-    fila_trab = barramento.obter_fila("fila-trabalho")
+
     for arq in arquivos:
         for tipo in TIPOS_TAREFA:
+            # Envia direto para a fila especializada do tipo
+            fila_trab = barramento.obter_fila(f"fila-trabalho-{tipo}")
             await fila_trab.enviar({
                 "id_tarefa": f"{tipo}-{uuid.uuid4().hex[:6]}",
                 "nome_arquivo": arq["nome"],
@@ -138,13 +143,23 @@ async def lidar_analisar(request: web.Request) -> web.Response:
                 "tipo_tarefa": tipo
             })
 
-    return web.json_response({"status": "MapReduce Iniciado via SQS Simulado", "tarefas": total_chunks})
+    return web.json_response({"status": "MapReduce Iniciado", "tarefas": total_chunks})
 
-async def lidar_metricas(request): return web.json_response(coletor.snapshot())
-async def lidar_resultados(request): return web.json_response({"relatorio": estado["relatorio_final"]})
+async def lidar_metricas(request): 
+    return web.json_response(
+        coletor.snapshot(), 
+        dumps=lambda obj: json.dumps(obj, ensure_ascii=False)
+    )
+
+async def lidar_resultados(request): 
+    return web.json_response(
+        {"relatorio": estado["relatorio_final"]}, 
+        dumps=lambda obj: json.dumps(obj, ensure_ascii=False)
+    )
 
 async def inicializar(app):
-    barramento.criar_fila("fila-trabalho", timeout_visibilidade=60)
+    for tipo in TIPOS_TAREFA:
+        barramento.criar_fila(f"fila-trabalho-{tipo}", timeout_visibilidade=60)
     barramento.criar_fila("fila-resultado", timeout_visibilidade=60)
     barramento.criar_fila("fila-eventos", timeout_visibilidade=10)
     asyncio.create_task(loop_telemetria())
@@ -154,11 +169,11 @@ def criar_app() -> web.Application:
     app = web.Application(middlewares=[middleware_cors])
     app.on_startup.append(inicializar)
     app.on_cleanup.append(limpar_processos)
-    
+
     app.router.add_post("/analisar", lidar_analisar)
     app.router.add_get("/metricas", lidar_metricas)
     app.router.add_get("/resultados", lidar_resultados)
-    
+
     # Endpoints do SQS Simulado
     app.router.add_post("/fila/{nome}/enviar", api_fila_enviar)
     app.router.add_get("/fila/{nome}/receber", api_fila_receber)

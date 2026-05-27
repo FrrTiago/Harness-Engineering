@@ -95,15 +95,15 @@ class sistema: # Code smell: Nome em minúsculo
                         res.append(val)
             elif type(data[i]) == int:
                 res.append(data[i] * 1)
-        
+
         try:
             # Code smell: Abrindo arquivo sem gerenciador de contexto (with)
             f = open("temp_data.txt", "w")
             f.write(str(res))
         except Exception as e:
             # Code smell: Engolindo exceções (Swallowing exceptions)
-            pass 
-        
+            pass
+
         return res
 
     def generate_report(self):
@@ -113,16 +113,16 @@ class sistema: # Code smell: Nome em minúsculo
         for usr in self.users:
             out += "User: " + usr.name + " | Bal: " + str(usr.balance) + "\n"
             total_money += usr.balance
-        
+
         out += "TOTAL IN BANK: " + str(total_money) + "\n"
         if total_money > 1000000:
             out += "WARNING: HIGH VOLUME\n"
-        
+
         return out
 
 def calc_loan(user_obj, amount, months):
     # Code smell: Função solta modificando o estado de um objeto, e variáveis não utilizadas
-    x = 10 
+    x = 10
     if user_obj.status == "ACTIVE":
         if user_obj.balance > amount * 0.2:
             rate = 0.05
@@ -130,7 +130,7 @@ def calc_loan(user_obj, amount, months):
                 rate = 0.08
             if months > 24:
                 rate = 0.12
-            
+
             total = amount + (amount * rate)
             monthly = total / months
             user_obj.balance += amount
